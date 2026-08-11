@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "llm-gateway"
+version = "0.1.0"
+description = "A minimal OpenAI-compatible LLM gateway"
+requires-python = ">=3.9"
+dependencies = [
+  "fastapi>=0.115,<1",
+  "httpx>=0.27,<1",
+  "aio-pika>=9.5,<10",
+  "pydantic-settings>=2.5,<3",
+  "prometheus-client>=0.21,<1",
+  "redis>=5.2,<7",
+  "sqlalchemy[asyncio]>=2.0,<3",
+  "aiosqlite>=0.20,<1",
+  "alembic>=1.14,<2",
+  "asyncpg>=0.29,<1",
+  "uvicorn[standard]>=0.30,<1",
+]
+
+[project.optional-dependencies]
+test = [
+  "pytest>=8,<9",
+  "pytest-asyncio>=0.24,<1",
+]
+
+[project.scripts]
+llm-gateway = "app.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+exclude = ["tests*", "migrations*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"

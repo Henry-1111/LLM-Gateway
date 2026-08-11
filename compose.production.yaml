@@ -1,0 +1,231 @@
+services:
+  gateway:
+    image: ${GATEWAY_IMAGE:?Set GATEWAY_IMAGE to an immutable registry tag or digest}
+    build: !reset null
+    ports: !override []
+    environment: !override
+      RUN_DATABASE_MIGRATIONS: "false"
+      PROVIDER_API_KEY_FILE: /run/secrets/provider_api_key
+      PROVIDER_BASE_URL: ${PROVIDER_BASE_URL:?Set PROVIDER_BASE_URL}
+      DEFAULT_MODEL: ${DEFAULT_MODEL:?Set DEFAULT_MODEL}
+      PROVIDER_TIMEOUT_SECONDS: ${PROVIDER_TIMEOUT_SECONDS:-30}
+      MAX_PROVIDER_ATTEMPTS: ${MAX_PROVIDER_ATTEMPTS:-2}
+      DATABASE_URL_FILE: /run/secrets/database_url
+      DATABASE_AUTO_CREATE: "false"
+      REDIS_URL_FILE: /run/secrets/redis_url
+      RATE_LIMIT_ENABLED: ${RATE_LIMIT_ENABLED:-true}
+      RATE_LIMIT_REQUESTS: ${RATE_LIMIT_REQUESTS:-60}
+      RATE_LIMIT_WINDOW_SECONDS: ${RATE_LIMIT_WINDOW_SECONDS:-60}
+      QUOTA_ENABLED: ${QUOTA_ENABLED:-true}
+      QUOTA_DEFAULT_TOKENS: ${QUOTA_DEFAULT_TOKENS:-1000000}
+      QUOTA_DEFAULT_COMPLETION_RESERVE_TOKENS: ${QUOTA_DEFAULT_COMPLETION_RESERVE_TOKENS:-1024}
+      QUOTA_RESERVATION_TTL_SECONDS: ${QUOTA_RESERVATION_TTL_SECONDS:-300}
+      IDEMPOTENCY_TTL_SECONDS: ${IDEMPOTENCY_TTL_SECONDS:-86400}
+      RABBITMQ_URL_FILE: /run/secrets/rabbitmq_url
+      RABBITMQ_EXCHANGE: ${RABBITMQ_EXCHANGE:-llm_gateway.events}
+      OUTBOX_PUBLISHER_ENABLED: ${OUTBOX_PUBLISHER_ENABLED:-true}
+      OUTBOX_POLL_INTERVAL_SECONDS: ${OUTBOX_POLL_INTERVAL_SECONDS:-1}
+      OUTBOX_BATCH_SIZE: ${OUTBOX_BATCH_SIZE:-100}
+      OUTBOX_MAX_RETRY_SECONDS: ${OUTBOX_MAX_RETRY_SECONDS:-60}
+      EVENT_CONSUMER_ENABLED: ${EVENT_CONSUMER_ENABLED:-true}
+      RABBITMQ_CONSUMER_QUEUE: ${RABBITMQ_CONSUMER_QUEUE:-llm_gateway.audit}
+      RABBITMQ_RETRY_DELAY_MS: ${RABBITMQ_RETRY_DELAY_MS:-5000}
+      RABBITMQ_MAX_RETRIES: ${RABBITMQ_MAX_RETRIES:-3}
+    secrets:
+      - provider_api_key
+      - database_url
+      - redis_url
+      - rabbitmq_url
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    stop_grace_period: 90s
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 2G
+          pids: 256
+        reservations:
+          cpus: "0.25"
+          memory: 256M
+    logging:
+      driver: json-file
+      options:
+        max-size: 20m
+        max-file: "5"
+    networks: !override
+      - edge-network
+      - data-network
+      - monitoring-network
+
+  postgres:
+    ports: !override []
+    environment: !override
+      POSTGRES_DB: llm_gateway
+      POSTGRES_USER: gateway
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+    secrets:
+      - postgres_password
+    shm_size: 256mb
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 2G
+        reservations:
+          memory: 512M
+    logging:
+      driver: json-file
+      options:
+        max-size: 20m
+        max-file: "5"
+    networks: !override
+      - data-network
+
+  redis:
+    ports: !override []
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 768M
+        reservations:
+          memory: 128M
+    logging:
+      driver: json-file
+      options:
+        max-size: 20m
+        max-file: "5"
+    networks: !override
+      - data-network
+
+  rabbitmq:
+    ports: !override
+      - "127.0.0.1:${RABBITMQ_MANAGEMENT_PORT:-15672}:15672"
+    deploy:
+      resources:
+        limits:
+          cpus: "1.5"
+          memory: 1G
+        reservations:
+          memory: 256M
+    logging:
+      driver: json-file
+      options:
+        max-size: 20m
+        max-file: "5"
+    networks: !override
+      - data-network
+      - management-network
+
+  prometheus:
+    ports: !override
+      - "127.0.0.1:${PROMETHEUS_PORT:-9090}:9090"
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 1G
+    logging:
+      driver: json-file
+      options:
+        max-size: 20m
+        max-file: "5"
+    networks: !override
+      - monitoring-network
+      - management-network
+
+  grafana:
+    ports: !override
+      - "127.0.0.1:${GRAFANA_PORT:-3000}:3000"
+    environment: !override
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:?Set GRAFANA_ADMIN_USER}
+      GF_SECURITY_ADMIN_PASSWORD__FILE: /run/secrets/grafana_admin_password
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    secrets:
+      - grafana_admin_password
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 768M
+    logging:
+      driver: json-file
+      options:
+        max-size: 20m
+        max-file: "5"
+    networks: !override
+      - monitoring-network
+      - management-network
+
+  caddy:
+    image: caddy:2.10.2-alpine
+    restart: unless-stopped
+    environment:
+      DOMAIN: ${DOMAIN:?Set DOMAIN}
+      ACME_EMAIL: ${ACME_EMAIL:?Set ACME_EMAIL}
+    ports:
+      - "${CADDY_HTTP_PORT:-80}:80"
+      - "${CADDY_HTTPS_PORT:-443}:443"
+      - "${CADDY_HTTPS_PORT:-443}:443/udp"
+    volumes:
+      - ./infra/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      gateway:
+        condition: service_healthy
+    networks: !override
+      - edge-network
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
+          pids: 256
+    logging:
+      driver: json-file
+      options:
+        max-size: 20m
+        max-file: "5"
+
+secrets:
+  provider_api_key:
+    file: ${PROVIDER_API_KEY_FILE:?Set PROVIDER_API_KEY_FILE}
+  database_url:
+    file: ${DATABASE_URL_FILE:?Set DATABASE_URL_FILE}
+  redis_url:
+    file: ${REDIS_URL_FILE:?Set REDIS_URL_FILE}
+  rabbitmq_url:
+    file: ${RABBITMQ_URL_FILE:?Set RABBITMQ_URL_FILE}
+  postgres_password:
+    file: ${POSTGRES_PASSWORD_FILE:?Set POSTGRES_PASSWORD_FILE}
+  grafana_admin_password:
+    file: ${GRAFANA_ADMIN_PASSWORD_FILE:?Set GRAFANA_ADMIN_PASSWORD_FILE}
+
+networks:
+  edge-network:
+    driver: bridge
+  data-network:
+    driver: bridge
+    internal: true
+  monitoring-network:
+    driver: bridge
+    internal: true
+  management-network:
+    driver: bridge
+
+volumes:
+  caddy-data:
+  caddy-config:

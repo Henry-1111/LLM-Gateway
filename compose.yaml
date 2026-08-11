@@ -1,0 +1,155 @@
+name: llm-gateway
+
+services:
+  gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    init: true
+    restart: unless-stopped
+    environment:
+      PROVIDER_API_KEY: ${PROVIDER_API_KEY:-replace-with-provider-key}
+      PROVIDER_BASE_URL: ${PROVIDER_BASE_URL:-https://api.openai.com/v1}
+      DEFAULT_MODEL: ${DEFAULT_MODEL:-gpt-4.1-mini}
+      PROVIDER_TIMEOUT_SECONDS: ${PROVIDER_TIMEOUT_SECONDS:-30}
+      MAX_PROVIDER_ATTEMPTS: ${MAX_PROVIDER_ATTEMPTS:-2}
+      DATABASE_URL: postgresql+asyncpg://gateway:${POSTGRES_PASSWORD:-gateway-dev-password}@postgres:5432/llm_gateway
+      DATABASE_AUTO_CREATE: "false"
+      REDIS_URL: redis://redis:6379/0
+      RATE_LIMIT_ENABLED: ${RATE_LIMIT_ENABLED:-true}
+      RATE_LIMIT_REQUESTS: ${RATE_LIMIT_REQUESTS:-60}
+      RATE_LIMIT_WINDOW_SECONDS: ${RATE_LIMIT_WINDOW_SECONDS:-60}
+      QUOTA_ENABLED: ${QUOTA_ENABLED:-true}
+      QUOTA_DEFAULT_TOKENS: ${QUOTA_DEFAULT_TOKENS:-1000000}
+      QUOTA_DEFAULT_COMPLETION_RESERVE_TOKENS: ${QUOTA_DEFAULT_COMPLETION_RESERVE_TOKENS:-1024}
+      QUOTA_RESERVATION_TTL_SECONDS: ${QUOTA_RESERVATION_TTL_SECONDS:-300}
+      IDEMPOTENCY_TTL_SECONDS: ${IDEMPOTENCY_TTL_SECONDS:-86400}
+      RABBITMQ_URL: amqp://gateway:${RABBITMQ_PASSWORD:-rabbit-dev-password}@rabbitmq:5672/
+      RABBITMQ_EXCHANGE: ${RABBITMQ_EXCHANGE:-llm_gateway.events}
+      OUTBOX_PUBLISHER_ENABLED: ${OUTBOX_PUBLISHER_ENABLED:-true}
+      OUTBOX_POLL_INTERVAL_SECONDS: ${OUTBOX_POLL_INTERVAL_SECONDS:-1}
+      OUTBOX_BATCH_SIZE: ${OUTBOX_BATCH_SIZE:-100}
+      OUTBOX_MAX_RETRY_SECONDS: ${OUTBOX_MAX_RETRY_SECONDS:-60}
+      EVENT_CONSUMER_ENABLED: ${EVENT_CONSUMER_ENABLED:-true}
+      RABBITMQ_CONSUMER_QUEUE: ${RABBITMQ_CONSUMER_QUEUE:-llm_gateway.audit}
+      RABBITMQ_RETRY_DELAY_MS: ${RABBITMQ_RETRY_DELAY_MS:-5000}
+      RABBITMQ_MAX_RETRIES: ${RABBITMQ_MAX_RETRIES:-3}
+      RUN_DATABASE_MIGRATIONS: "true"
+    ports:
+      - "${GATEWAY_PORT:-8000}:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/ready', timeout=2)"
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 15s
+    networks:
+      - gateway-network
+
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: llm_gateway
+      POSTGRES_USER: gateway
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-gateway-dev-password}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U gateway -d llm_gateway"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    networks:
+      - gateway-network
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--save", "60", "1"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    networks:
+      - gateway-network
+
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    restart: unless-stopped
+    environment:
+      RABBITMQ_DEFAULT_USER: gateway
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-rabbit-dev-password}
+    ports:
+      - "${RABBITMQ_MANAGEMENT_PORT:-15672}:15672"
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 15s
+    networks:
+      - gateway-network
+
+  prometheus:
+    image: prom/prometheus:v3.5.0
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=${PROMETHEUS_RETENTION:-15d}
+    ports:
+      - "${PROMETHEUS_PORT:-9090}:9090"
+    volumes:
+      - ./infra/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    depends_on:
+      gateway:
+        condition: service_healthy
+    networks:
+      - gateway-network
+
+  grafana:
+    image: grafana/grafana:12.1.0
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin-dev-password}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    ports:
+      - "${GRAFANA_PORT:-3000}:3000"
+    volumes:
+      - ./infra/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./infra/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    depends_on:
+      - prometheus
+    networks:
+      - gateway-network
+
+networks:
+  gateway-network:
+    driver: bridge
+
+volumes:
+  postgres-data:
+  redis-data:
+  rabbitmq-data:
+  prometheus-data:
+  grafana-data:

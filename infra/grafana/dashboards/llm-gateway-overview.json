@@ -1,0 +1,83 @@
+{
+  "annotations": {"list": []},
+  "editable": true,
+  "panels": [
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {"defaults": {"unit": "reqps"}, "overrides": []},
+      "gridPos": {"h": 8, "w": 8, "x": 0, "y": 0},
+      "id": 1,
+      "targets": [
+        {"expr": "sum(rate(gateway_http_requests_total[5m]))", "legendFormat": "RPS", "refId": "A"}
+      ],
+      "title": "Gateway request rate",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {"defaults": {"unit": "s"}, "overrides": []},
+      "gridPos": {"h": 8, "w": 8, "x": 8, "y": 0},
+      "id": 2,
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (le, route) (rate(gateway_http_request_duration_seconds_bucket[5m])))",
+          "legendFormat": "{{route}}",
+          "refId": "A"
+        }
+      ],
+      "title": "HTTP P95 latency",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []},
+      "gridPos": {"h": 8, "w": 8, "x": 16, "y": 0},
+      "id": 3,
+      "targets": [
+        {
+          "expr": "sum by (provider, token_type) (increase(gateway_tokens_total[5m]))",
+          "legendFormat": "{{provider}} / {{token_type}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Token usage (5m)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8},
+      "id": 4,
+      "targets": [
+        {
+          "expr": "sum by (from_provider, to_provider, reason) (increase(gateway_provider_failovers_total[15m]))",
+          "legendFormat": "{{from_provider}} → {{to_provider}} / {{reason}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Provider failovers (15m)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8},
+      "id": 5,
+      "targets": [
+        {"expr": "sum(increase(gateway_dead_letter_messages_total[15m]))", "legendFormat": "DLQ", "refId": "A"},
+        {"expr": "sum(increase(gateway_outbox_publish_failures_total[15m]))", "legendFormat": "Outbox failures", "refId": "B"}
+      ],
+      "title": "Messaging failures (15m)",
+      "type": "timeseries"
+    }
+  ],
+  "refresh": "10s",
+  "schemaVersion": 41,
+  "tags": ["llm-gateway"],
+  "templating": {"list": []},
+  "time": {"from": "now-1h", "to": "now"},
+  "timezone": "browser",
+  "title": "LLM Gateway Overview",
+  "uid": "llm-gateway-overview",
+  "version": 1
+}

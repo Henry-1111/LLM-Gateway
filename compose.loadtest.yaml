@@ -1,0 +1,62 @@
+services:
+  gateway:
+    environment:
+      PROVIDER_API_KEY: load-test-provider-key
+      PROVIDER_BASE_URL: http://mock-provider:8080/v1
+      DEFAULT_MODEL: load-test-model
+      PROVIDER_TIMEOUT_SECONDS: 5
+      RATE_LIMIT_REQUESTS: 1000000
+      RATE_LIMIT_WINDOW_SECONDS: 60
+      QUOTA_DEFAULT_TOKENS: 1000000000
+      QUOTA_DEFAULT_COMPLETION_RESERVE_TOKENS: 32
+    depends_on:
+      mock-provider:
+        condition: service_healthy
+
+  mock-provider:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command:
+      - uvicorn
+      - loadtest.mock_provider:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8080"
+    environment:
+      RUN_DATABASE_MIGRATIONS: "false"
+      MOCK_PROVIDER_DELAY_MS: ${MOCK_PROVIDER_DELAY_MS:-20}
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=2)"
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+    networks:
+      - gateway-network
+
+  k6:
+    image: grafana/k6:0.54.0
+    profiles: ["loadtest"]
+    environment:
+      BASE_URL: http://gateway:8000
+      API_KEY: ${API_KEY:-}
+      MODEL: load-test-model
+      VUS: ${VUS:-10}
+      DURATION: ${DURATION:-30s}
+      THINK_TIME_SECONDS: ${THINK_TIME_SECONDS:-0.1}
+      P95_THRESHOLD: ${P95_THRESHOLD:-p(95)<1000}
+      ERROR_THRESHOLD: ${ERROR_THRESHOLD:-rate<0.01}
+      REQUEST_TIMEOUT: ${REQUEST_TIMEOUT:-10s}
+    volumes:
+      - ./loadtest:/scripts:ro
+    depends_on:
+      gateway:
+        condition: service_healthy
+    networks:
+      - gateway-network

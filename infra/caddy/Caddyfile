@@ -1,0 +1,38 @@
+{
+	email {$ACME_EMAIL}
+	admin off
+}
+
+{$DOMAIN} {
+	encode zstd gzip
+
+	request_body {
+		max_size 2MB
+	}
+
+	@private path /metrics /metrics/* /docs /docs/* /redoc /redoc/* /openapi.json
+	respond @private 404
+
+	reverse_proxy gateway:8000 {
+		health_uri /ready
+		health_interval 15s
+		health_timeout 3s
+		transport http {
+			dial_timeout 5s
+			response_header_timeout 65s
+		}
+	}
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "no-referrer"
+		-Server
+	}
+
+	log {
+		output stdout
+		format json
+	}
+}
